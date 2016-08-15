@@ -67,7 +67,9 @@
   (with-slots (class elmdef slots children) instance
     (let ((slot (xml-class-body-slot class)))
       (when slot
-        (setf (gethash slot slots) (slot-parse-value slot characters))))))
+        (if (gethash slot slots)
+            (setf (gethash slot slots) (concatenate 'string (gethash slot slots) characters))
+            (setf (gethash slot slots) characters)))))) ;; (slot-parse-value slot characters)
 
 (defmethod importer-add-element ((handler xml-class-importer)
                                (node xml-node) element value)
@@ -126,7 +128,8 @@
     initforms))
 
 (defmethod importer-finalize ((handler xml-class-importer)
-                            (instance xml-class-instance))
+                              (instance xml-class-instance))
+  ;; TODO Run the slot-parse-value somewhere in here. (or in  importer-add-element for BKNR.IMPEX::XML-NODE)
   (with-slots (class elmdef children slots) instance
     (let* ((initforms (slots-to-initforms slots))
            (object (apply #'create-instance handler (class-name class) initforms)))
