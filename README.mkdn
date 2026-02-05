@@ -1,6 +1,6 @@
 # bknr.datastore
 
-An in-memory CLOS based data store.
+An in-memory CLOS based data store.  Some documentation is linked from the ancient [web site](https://bknr.common-lisp.dev).
 
 # installing through quicklisp
 
