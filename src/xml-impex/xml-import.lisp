@@ -64,13 +64,17 @@
 
 (defmethod importer-add-characters ((handler xml-class-importer)
                                   (instance xml-class-instance) characters)
+  ;; SAX may deliver the text content of a single element across several
+  ;; SAX:CHARACTERS calls. Only buffer the raw chunks here; the slot's
+  ;; parser/id-to-object transform is applied once, on the complete string,
+  ;; in IMPORTER-FINALIZE.
   (with-slots (class elmdef slots children) instance
     (let ((slot (xml-class-body-slot class)))
       (when slot
         (setf (gethash slot slots)
               (concatenate 'string
-                           (gethash slot slots)
-                           (slot-parse-value slot characters)))))))
+                           (or (gethash slot slots) "")
+                           characters))))))
 
 (defmethod importer-add-element ((handler xml-class-importer)
                                (node xml-node) element value)
@@ -131,6 +135,12 @@
 (defmethod importer-finalize ((handler xml-class-importer)
                             (instance xml-class-instance))
   (with-slots (class elmdef children slots) instance
+    ;; The body slot was buffered raw across all SAX:CHARACTERS calls; now
+    ;; that the element is closed we have the whole string, so parse it once.
+    (let ((body-slot (xml-class-body-slot class)))
+      (when (and body-slot (nth-value 1 (gethash body-slot slots)))
+        (setf (gethash body-slot slots)
+              (slot-parse-value body-slot (gethash body-slot slots)))))
     (let* ((initforms (slots-to-initforms slots))
            (object (apply #'create-instance handler (class-name class) initforms)))
 
