@@ -95,7 +95,7 @@
 ;;; ----------------------------------------------------------------
 ;;; Array (saves all standard array attributes except for displacedness)
 ;;;     tag     #\a
-;;;     type    %symbol           ARRAY-ELEMENT-TYPE
+;;;     type    el-type           ARRAY-ELEMENT-TYPE (see below)
 ;;;     flags   byte
 ;;;               bit 0: array is a vector
 ;;;               bit 1: array is adjustable
@@ -114,6 +114,11 @@
 ;;;   }
 ;;;
 ;;;     data    object[\Pi dims]  Data in row-major-order
+;;;
+;;;   el-type is a symbol written as its home package and name (as for #\y,
+;;;   without the tag). An empty package name is a sentinel meaning a compound
+;;;   type specifier (e.g. (unsigned-byte 8)) follows, encoded as a tagged
+;;;   object. A real symbol's home package never has an empty name.
 ;;;
 ;;; ----------------------------------------------------------------
 
@@ -259,8 +264,21 @@
   (%write-tag #\d stream)
   (%encode-double-float object stream))
 
+(defun %encode-array-element-type (element-type stream)
+  ;; ARRAY-ELEMENT-TYPE may be a symbol (T, BIT, ...) or, after upgrading, a
+  ;; compound specifier such as (UNSIGNED-BYTE 8). A symbol is written as its
+  ;; home package and name, exactly as before. A compound specifier is written
+  ;; with an empty package name as a sentinel -- which a real symbol never has
+  ;; -- followed by the specifier encoded as a general object, so arrays
+  ;; written by older versions stay readable.
+  (if (symbolp element-type)
+      (%encode-symbol element-type stream)
+      (progn
+        (%encode-string "" stream)
+        (encode element-type stream))))
+
 (defun %encode-array (object stream)
-  (%encode-symbol (array-element-type object) stream)
+  (%encode-array-element-type (array-element-type object) stream)
   (let* ((vectorp (typep object 'vector))
          (fill-pointer-p (array-has-fill-pointer-p object))
          (flags (logior (if vectorp 1 0)
@@ -438,8 +456,18 @@
   (sb-kernel:make-double-float (%decode-sint32 stream)
                                (%decode-uint32 stream)))
 
+(defun %decode-array-element-type (stream)
+  ;; Inverse of %encode-array-element-type: an empty package name marks a
+  ;; compound type specifier encoded as a general object; anything else is the
+  ;; home package of a symbol element type.
+  (let ((package-name (%decode-string stream)))
+    (if (string= package-name "")
+        (decode stream)
+        (find-symbol-interactively
+         package-name (%decode-string stream) "array element type"))))
+
 (defun %decode-array (stream)
-  (let* ((element-type (%decode-symbol stream :usage "array element type"))
+  (let* ((element-type (%decode-array-element-type stream))
          (flags (read-byte stream))
          (vectorp (logbitp 0 flags))
          (adjustablep (logbitp 1 flags))

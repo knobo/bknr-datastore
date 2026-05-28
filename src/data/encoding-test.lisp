@@ -164,8 +164,18 @@
 (test-encoding array.3
                (make-array '(2 2) :element-type 'fixnum :initial-element 3))
 
-(test-encoding (array.3b :skip "will be fixed later - http://trac.common-lisp.net/bknr/ticket/31")
+(test-encoding array.3b
                (make-array '(2 2) :element-type '(mod 10) :initial-element 3))
+
+;; Compound element-type specifiers such as (unsigned-byte 8) upgrade to a
+;; list, not a symbol; the array encoding must handle that (issue #20).
+(test-encoding array.3c
+               (make-array 4 :element-type '(unsigned-byte 8)
+                             :initial-contents '(1 2 3 255)))
+
+(test-encoding array.3d
+               (make-array '(2 2) :element-type '(signed-byte 16)
+                                  :initial-contents '((1 -2) (300 -4))))
 
 (test-encoding array.4
                (make-array  '(2 3 5)
