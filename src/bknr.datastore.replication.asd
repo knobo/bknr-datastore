@@ -12,3 +12,11 @@ server-sent events, derived views, and change-data-capture."
                              (:file "auth" :depends-on ("package" "wire"))
                              (:file "replication" :depends-on ("package"))
                              (:file "network" :depends-on ("package" "wire" "replication" "auth"))))))
+
+(defsystem :bknr.datastore.replication/tls
+  :name "bknr.datastore.replication/tls"
+  :description "Optional TLS transport for bknr.datastore replication (cl+ssl).
+Plugs into the :make-stream seam of start-replication-server / run-replica."
+  :depends-on (:bknr.datastore.replication :cl+ssl :usocket)
+  :components ((:module "replication"
+                :components ((:file "tls")))))
