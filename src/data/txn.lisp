@@ -261,6 +261,25 @@ want to change the store permanently."
     (with-standard-io-syntax
       (prin1 (store-random-state store) f))))
 
+(defmethod store-transaction-id-pathname ((store store))
+  (merge-pathnames #P"transaction-id" (store-current-directory store)))
+
+(defun update-store-transaction-id (store)
+  "Persister gjeldende LSN-baseline (transaction-counter) til disk."
+  (with-open-file (f (store-transaction-id-pathname store)
+                     :direction :output :if-does-not-exist :create :if-exists :supersede)
+    (with-standard-io-syntax
+      (prin1 (store-transaction-counter store) f))))
+
+(defun ensure-store-transaction-id (store)
+  "Les den persisterte LSN-baselinen for STORE.  Defaulter til 0 for stores som
+ble skrevet før denne mekanismen fantes (bakoverkompatibelt)."
+  (setf (store-transaction-counter store)
+        (if (probe-file (store-transaction-id-pathname store))
+            (with-open-file (f (store-transaction-id-pathname store))
+              (with-standard-io-syntax (read f)))
+            0)))
+
 (defgeneric store-transaction-log-pathname (store-or-directory)
   (:documentation "Return the pathname of the current transaction log of STORE"))
 
@@ -748,6 +767,7 @@ pathname until a non-existant directory name has been found."
             (unwind-protect
                  (with-store-state (:snapshot)
                    (update-store-random-state store)
+                   (update-store-transaction-id store)
                    (dolist (subsystem (store-subsystems store))
                      (when *store-debug*
                        (report-progress "Snapshotting subsystem ~A of ~A~%" subsystem store))
@@ -804,7 +824,8 @@ pathname until a non-existant directory name has been found."
                 (when *show-transactions*
                   (report-progress "~&;;; ~A txn @~D: ~A~%" (transaction-timestamp txn) position txn))
                 (let ((*txn-log-stream* s))
-                  (execute-unlogged txn))))))
+                  (execute-unlogged txn))
+                (incf (store-transaction-counter *store*))))))
       (discard ()
         :report (lambda (stream) (format stream "Discard transaction log before failing transaction ~A." txn))
         (truncate-log pathname position)
@@ -819,6 +840,7 @@ pathname until a non-existant directory name has been found."
 
 (defmethod restore-store ((store store) &key until)
   (ensure-store-random-state store)
+  (ensure-store-transaction-id store)
   (report-progress "restoring ~A~%" store)
   (let ((*store* store))
     (setf (store-state store) :opened)

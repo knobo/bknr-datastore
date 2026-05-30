@@ -79,3 +79,56 @@
         (remove-commit-observer #'obs store)
         (make-instance 'repl-test-object :value 2)
         (5am:is (= 1 count))))))
+
+;;; --- Persistert LSN ---
+
+(5am:test lsn.survives-snapshot-and-restore
+  "Tellerstanden persisteres ved snapshot og leses tilbake ved restore."
+  (let ((dir (make-test-store-directory)) counter-before)
+    (unwind-protect
+         (progn
+           (let ((store (make-instance 'store :directory dir)))
+             (make-instance 'repl-test-object :value 1)
+             (make-instance 'repl-test-object :value 2)
+             (setf counter-before (store-transaction-counter store))
+             (5am:is (>= counter-before 2))
+             (snapshot-store store)
+             (close-store))
+           (let ((store2 (make-instance 'store :directory dir)))
+             (5am:is (>= (store-transaction-counter store2) counter-before))
+             (close-store)))
+      (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))
+
+(5am:test lsn.consistent-after-replay
+  "Etter snapshot + flere commits + reopen er telleren identisk reprodusert."
+  (let ((dir (make-test-store-directory)) counter-at-close)
+    (unwind-protect
+         (progn
+           (let ((store (make-instance 'store :directory dir)))
+             (make-instance 'repl-test-object :value 1)
+             (snapshot-store store)                       ; baseline persistert
+             (make-instance 'repl-test-object :value 2)   ; post-snapshot poster i ny logg
+             (make-instance 'repl-test-object :value 3)
+             (setf counter-at-close (store-transaction-counter store))
+             (close-store))
+           (let ((store2 (make-instance 'store :directory dir)))
+             (5am:is (= counter-at-close (store-transaction-counter store2)))
+             (close-store)))
+      (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))
+
+(5am:test observer.does-not-corrupt-restore
+  "Med en observer registrert restoreres tilstanden fortsatt korrekt."
+  (let ((dir (make-test-store-directory)) id)
+    (unwind-protect
+         (progn
+           (let ((store (make-instance 'store :directory dir)))
+             (add-commit-observer (lambda (&rest args) (declare (ignore args))) store)
+             (setf id (store-object-id (make-instance 'repl-test-object :value 99)))
+             (close-store))
+           (let ((store2 (make-instance 'store :directory dir)))
+             (declare (ignorable store2))
+             (let ((obj (store-object-with-id id)))
+               (5am:is (not (null obj)))
+               (5am:is (= 99 (repl-test-object-value obj))))
+             (close-store)))
+      (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore))))
