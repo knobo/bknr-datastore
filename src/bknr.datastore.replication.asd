@@ -20,3 +20,17 @@ Plugs into the :make-stream seam of start-replication-server / run-replica."
   :depends-on (:bknr.datastore.replication :cl+ssl :usocket)
   :components ((:module "replication"
                 :components ((:file "tls")))))
+
+(defsystem :bknr.datastore.replication/test
+  :depends-on (:bknr.datastore.replication :fiveam)
+  :components ((:module "replication"
+                :components ((:file "replication-test"))))
+  :perform (test-op (o c)
+             (symbol-call :fiveam :run! :bknr.datastore.replication)))
+
+(defsystem :bknr.datastore.replication/tls-test
+  :depends-on (:bknr.datastore.replication/tls :fiveam :usocket :bordeaux-threads)
+  :components ((:module "replication"
+                :components ((:file "tls-test"))))
+  :perform (test-op (o c)
+             (symbol-call :fiveam :run! :bknr.datastore.replication.tls)))
