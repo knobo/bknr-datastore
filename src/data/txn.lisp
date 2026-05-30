@@ -118,14 +118,13 @@
                          :documentation "The total run time of all application transaction code since last snapshot")
    (transaction-counter :accessor store-transaction-counter
                         :initform 0
-                        :documentation "Monotont antall toppnivå-transaksjoner som er
-appendet til loggen.  Persisteres ved snapshot og avanseres ved commit og ved
-avspilling av loggen.  Fungerer som log sequence number (LSN) for observere og
-replikering.")
+                        :documentation "Monotonic count of top-level transactions
+appended to the log.  Persisted at snapshot and advanced both on commit and
+during log replay.  Serves as a log sequence number (LSN) for observers.")
    (commit-observers :accessor store-commit-observers
                      :initform nil
-                     :documentation "Liste av funksjoner som kalles etter hver
-committed transaksjon med argumentene (store transaction encoded-bytes lsn)."))
+                     :documentation "List of functions called after each committed
+transaction with the arguments (store transaction encoded-bytes lsn)."))
   (:default-initargs
    :guard #'funcall
     :log-guard #'funcall
@@ -265,15 +264,15 @@ want to change the store permanently."
   (merge-pathnames #P"transaction-id" (store-current-directory store)))
 
 (defun update-store-transaction-id (store)
-  "Persister gjeldende LSN-baseline (transaction-counter) til disk."
+  "Persist the current LSN baseline (transaction-counter) to disk."
   (with-open-file (f (store-transaction-id-pathname store)
                      :direction :output :if-does-not-exist :create :if-exists :supersede)
     (with-standard-io-syntax
       (prin1 (store-transaction-counter store) f))))
 
 (defun ensure-store-transaction-id (store)
-  "Les den persisterte LSN-baselinen for STORE.  Defaulter til 0 for stores som
-ble skrevet før denne mekanismen fantes (bakoverkompatibelt)."
+  "Read the persisted LSN baseline for STORE, defaulting to 0 for stores written
+before this facility existed (backward compatible)."
   (setf (store-transaction-counter store)
         (if (probe-file (store-transaction-id-pathname store))
             (with-open-file (f (store-transaction-id-pathname store))
@@ -523,18 +522,17 @@ to the log file in an atomic group"))
 ;;; Commit observers / replication hook
 
 (defgeneric transaction-committed (store transaction encoded-bytes lsn)
-  (:documentation "Kalt etter at TRANSACTION er durabelt appendet til
-transaksjonsloggen til STORE.  ENCODED-BYTES er den serialiserte
-transaksjonsposten nøyaktig slik den ble skrevet til loggen, og LSN er dens
-monotone log sequence number.  Standardmetoden kaller hver funksjon i
-STORE-COMMIT-OBSERVERS.")
+  (:documentation "Called after TRANSACTION has been durably appended to the
+transaction log of STORE.  ENCODED-BYTES is the serialized transaction record
+exactly as written to the log, and LSN is its monotonic log sequence number.
+The default method calls each function in STORE-COMMIT-OBSERVERS.")
   (:method ((store store) transaction encoded-bytes lsn)
     (dolist (observer (store-commit-observers store))
       (funcall observer store transaction encoded-bytes lsn))))
 
 (defun add-commit-observer (function &optional (store *store*))
-  "Registrer FUNCTION til å kalles etter hver committed transaksjon.  Se
-TRANSACTION-COMMITTED for kallekonvensjon.  Returnerer FUNCTION."
+  "Register FUNCTION to be called after each committed transaction.  See
+TRANSACTION-COMMITTED for the calling convention.  Returns FUNCTION."
   ;; Serialize with the commit path, which reads the observer list under the log
   ;; guard; the recursive lock makes this safe even from inside a transaction.
   (with-log-guard (store)
@@ -542,7 +540,7 @@ TRANSACTION-COMMITTED for kallekonvensjon.  Returnerer FUNCTION."
   function)
 
 (defun remove-commit-observer (function &optional (store *store*))
-  "Fjern FUNCTION fra commit-observerne til STORE."
+  "Remove FUNCTION from the commit observers of STORE."
   (with-log-guard (store)
     (setf (store-commit-observers store)
           (remove function (store-commit-observers store))))
@@ -569,10 +567,10 @@ TRANSACTION-COMMITTED for kallekonvensjon.  Returnerer FUNCTION."
         (fsync (store-transaction-log-stream *store*)))))
 
 (defun commit-transaction-to-log (transaction)
-  "Append TRANSACTION til transaksjonsloggen til *STORE*, fsync (med mindre
-deaktivert), tildel neste LSN og varsle commit-observere.  Når observere er
-registrert encodes posten til en buffer først, slik at de eksakte bytene kan
-overleveres; ellers streames den rett til loggen som før."
+  "Append TRANSACTION to the transaction log of *STORE*, fsync (unless disabled),
+assign the next LSN and notify commit observers.  When observers are registered
+the record is encoded into a buffer first, so the exact bytes can be handed to
+them; otherwise it is streamed straight to the log as before."
   (with-log-guard ()
     (let ((out (store-transaction-log-stream *store*))
           (lsn (incf (store-transaction-counter *store*))))
