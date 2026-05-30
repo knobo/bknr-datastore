@@ -277,7 +277,7 @@ ble skrevet før denne mekanismen fantes (bakoverkompatibelt)."
   (setf (store-transaction-counter store)
         (if (probe-file (store-transaction-id-pathname store))
             (with-open-file (f (store-transaction-id-pathname store))
-              (with-standard-io-syntax (read f)))
+              (with-standard-io-syntax (let ((*read-eval* nil)) (read f))))
             0)))
 
 (defgeneric store-transaction-log-pathname (store-or-directory)
@@ -535,13 +535,17 @@ STORE-COMMIT-OBSERVERS.")
 (defun add-commit-observer (function &optional (store *store*))
   "Registrer FUNCTION til å kalles etter hver committed transaksjon.  Se
 TRANSACTION-COMMITTED for kallekonvensjon.  Returnerer FUNCTION."
-  (pushnew function (store-commit-observers store))
+  ;; Serialize with the commit path, which reads the observer list under the log
+  ;; guard; the recursive lock makes this safe even from inside a transaction.
+  (with-log-guard (store)
+    (pushnew function (store-commit-observers store)))
   function)
 
 (defun remove-commit-observer (function &optional (store *store*))
   "Fjern FUNCTION fra commit-observerne til STORE."
-  (setf (store-commit-observers store)
-        (remove function (store-commit-observers store)))
+  (with-log-guard (store)
+    (setf (store-commit-observers store)
+          (remove function (store-commit-observers store))))
   function)
 
 (defun fsync (stream)
