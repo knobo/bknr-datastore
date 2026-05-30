@@ -115,7 +115,17 @@
                :initarg :subsystems)
    (transaction-run-time :accessor store-transaction-run-time
                          :initform 0
-                         :documentation "The total run time of all application transaction code since last snapshot"))
+                         :documentation "The total run time of all application transaction code since last snapshot")
+   (transaction-counter :accessor store-transaction-counter
+                        :initform 0
+                        :documentation "Monotont antall toppnivå-transaksjoner som er
+appendet til loggen.  Persisteres ved snapshot og avanseres ved commit og ved
+avspilling av loggen.  Fungerer som log sequence number (LSN) for observere og
+replikering.")
+   (commit-observers :accessor store-commit-observers
+                     :initform nil
+                     :documentation "Liste av funksjoner som kalles etter hver
+committed transaksjon med argumentene (store transaction encoded-bytes lsn)."))
   (:default-initargs
    :guard #'funcall
     :log-guard #'funcall
@@ -491,6 +501,30 @@ to the log file in an atomic group"))
                         :tx-name (transaction-function-symbol transaction)))
              (transaction-args transaction)))))
 
+;;; Commit observers / replication hook
+
+(defgeneric transaction-committed (store transaction encoded-bytes lsn)
+  (:documentation "Kalt etter at TRANSACTION er durabelt appendet til
+transaksjonsloggen til STORE.  ENCODED-BYTES er den serialiserte
+transaksjonsposten nøyaktig slik den ble skrevet til loggen, og LSN er dens
+monotone log sequence number.  Standardmetoden kaller hver funksjon i
+STORE-COMMIT-OBSERVERS.")
+  (:method ((store store) transaction encoded-bytes lsn)
+    (dolist (observer (store-commit-observers store))
+      (funcall observer store transaction encoded-bytes lsn))))
+
+(defun add-commit-observer (function &optional (store *store*))
+  "Registrer FUNCTION til å kalles etter hver committed transaksjon.  Se
+TRANSACTION-COMMITTED for kallekonvensjon.  Returnerer FUNCTION."
+  (pushnew function (store-commit-observers store))
+  function)
+
+(defun remove-commit-observer (function &optional (store *store*))
+  "Fjern FUNCTION fra commit-observerne til STORE."
+  (setf (store-commit-observers store)
+        (remove function (store-commit-observers store)))
+  function)
+
 (defun fsync (stream)
   ;; FINISH-OUTPUT macht leider auch nichts anderes als FORCE-OUTPUT,
   ;; dabei waere sync()-Semantik zu erwarten.
@@ -511,6 +545,28 @@ to the log file in an atomic group"))
       (with-log-guard ()
         (fsync (store-transaction-log-stream *store*)))))
 
+(defun commit-transaction-to-log (transaction)
+  "Append TRANSACTION til transaksjonsloggen til *STORE*, fsync (med mindre
+deaktivert), tildel neste LSN og varsle commit-observere.  Når observere er
+registrert encodes posten til en buffer først, slik at de eksakte bytene kan
+overleveres; ellers streames den rett til loggen som før."
+  (with-log-guard ()
+    (let ((out (store-transaction-log-stream *store*))
+          (lsn (incf (store-transaction-counter *store*))))
+      (cond
+        ((store-commit-observers *store*)
+         (let ((bytes (let ((buffer (flex:make-in-memory-output-stream)))
+                        (encode transaction buffer)
+                        (flex:get-output-stream-sequence buffer))))
+           (write-sequence bytes out)
+           (unless *disable-sync*
+             (fsync out))
+           (transaction-committed *store* transaction bytes lsn)))
+        (t
+         (encode transaction out)
+         (unless *disable-sync*
+           (fsync out)))))))
+
 (defmacro with-transaction-log ((transaction) &body body)
   (check-type transaction symbol) ; otherwise care for multiple evaluation
   `(with-store-guard ()
@@ -520,11 +576,7 @@ to the log file in an atomic group"))
        (prog1
            (let ((*current-transaction* ,transaction))
              ,@body)
-         (with-log-guard ()
-           (let ((out (store-transaction-log-stream *store*)))
-             (encode ,transaction out)
-             (unless *disable-sync*
-               (fsync out))))))))
+         (commit-transaction-to-log ,transaction)))))
 
 (defvar *transaction-statistics* (make-statistics-table))
 
