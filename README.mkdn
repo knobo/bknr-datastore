@@ -1,7 +1,110 @@
-# bknr.datastore
+# bknr.datastore (knobo fork)
 
-An in-memory CLOS based data store.  Some documentation is linked from the ancient [web site](https://bknr.common-lisp.dev/).
+An in-memory, CLOS/MOP-based data store with transactions for Common Lisp.
+Objects live in RAM and are made durable by a transaction log plus periodic
+snapshots, so the whole object graph is queryable at memory speed and survives
+restarts.
 
-# installing through quicklisp
+This is a **maintained fork** of [bknr-datastore/bknr-datastore][upstream] by
+Hans Hübner. Upstream has [stopped accepting issues and pull requests][monument]
+and is kept as a "monument of better times"; some documentation is still linked
+from the [original web site](https://bknr.common-lisp.dev/). This fork continues
+development — chiefly a replication module (below) — and exists precisely because
+upstream invited people to "create your own" fork.
 
-Please use [Quicklisp](http://quicklisp.org/) to install bknr-datastore
+> This fork is developed largely with AI assistance — see [About this fork](#about-this-fork).
+
+## About this fork
+
+- **It is largely AI-assisted.** Most of the code here is written with the help
+  of LLM tooling, with a human reviewing, testing and steering. That is a
+  deliberate choice, and the opposite of upstream's stance; if you prefer
+  human-authored Common Lisp, the [upstream repository][upstream] is the place
+  to read.
+- **It aims to stay tested and honest.** Changes come with tests (a FiveAM unit
+  suite and a two-process integration suite), and docstrings explain *why* a
+  thing is done, not just what it does.
+- **The core datastore is unchanged in spirit.** The fork adds on top rather
+  than rewriting; existing bknr.datastore code and behaviour are preserved.
+
+## What this fork adds
+
+### Replication (`bknr.datastore.replication`)
+
+Log-shipping replication: a **primary** ships its committed transactions to one
+or more **standby** replicas, which apply them and stay in lockstep.
+
+- **Transport-agnostic apply core.** The same `apply-replication-stream` drives
+  an in-memory pipe, a file tail, or a socket; the TCP layer is thin on top.
+- **Bootstrap + resume.** A fresh or stale replica is bootstrapped with the
+  primary's full current state; a returning replica resumes from its last LSN
+  and receives only the delta, falling back to a bootstrap when the primary's
+  identity (epoch) changed or a snapshot rotated the needed log away.
+- **Non-blocking fan-out.** Per-replica writer threads with bounded send queues:
+  a slow replica is dropped rather than allowed to stall the primary's commits,
+  and the large base transfer runs off the commit lock.
+- **Apply hooks.** `add-apply-observer` is the replica-side counterpart of a
+  commit observer — use it for server-sent events, derived/materialized views,
+  or change-data-capture.
+- **Mutual authentication.** A shared secret gates replication via a nonce-based
+  HMAC-SHA256 challenge-response; the secret never crosses the wire.
+- **Optional TLS** via the separate `bknr.datastore.replication/tls` system
+  (cl+ssl), so the base module carries no OpenSSL dependency.
+
+Design and rationale: [`doc/replication-design.md`](doc/replication-design.md).
+
+### Examples and tooling (`bin/`)
+
+Everything under [`bin/`](bin/README.md) is **example and test code, not
+production library code**:
+
+- `bknr-repl.ros` — a runnable two-terminal demo of replication (a primary you
+  type into, a standby that mirrors it live).
+- `integration-test.exp` / `integration-test.sh` — the two-process integration
+  suite; `smoke-test.sh` — a minimal end-to-end check.
+
+These use [Roswell](https://github.com/roswell/roswell) (`ros`), the de-facto
+Common Lisp script-runner and installer that much of the modern CL ecosystem
+ships with, to launch a script or build it into a standalone binary. **The
+library itself has no dependency on Roswell** — it is only how these examples
+run themselves.
+
+## Installing
+
+Upstream is installable via [Quicklisp](http://quicklisp.org/) as
+`bknr-datastore`. This fork is not in Quicklisp; load it from a checkout, e.g.
+with [Roswell](https://github.com/roswell/roswell):
+
+```sh
+ros run --eval '(push #P"/path/to/bknr-datastore/src/" asdf:*central-registry*)' \
+        --eval '(ql:quickload :bknr.datastore.replication)'
+```
+
+The replication module depends on `usocket`, `bordeaux-threads`, `ironclad` and
+`trivial-utf-8`; the optional TLS system additionally needs `cl+ssl`.
+
+## Running the tests
+
+```sh
+# core datastore + replication unit suites (FiveAM, via Roswell)
+ros run --eval '(push #P"/path/to/bknr-datastore/src/" asdf:*central-registry*)' \
+        --eval '(ql:quickload :bknr.datastore.replication/test)' \
+        --eval '(asdf:test-system :bknr.datastore.replication)' --quit
+
+# two-process integration suite (builds the demo binary first)
+ros build bin/bknr-repl.ros
+BKNR_REPL=./bin/bknr-repl expect bin/integration-test.exp
+```
+
+The integration suite drives a live primary and standby with [`expect`][expect],
+waiting for real output markers instead of fixed sleeps. `bin/integration-test.sh`
+is a thin wrapper that runs the same `.exp` script, so either invocation works.
+
+## License
+
+ISC-style, unchanged from upstream: Copyright (C) 2019 by Hans Hübner. See
+[`license.txt`](license.txt). Fork changes are released under the same terms.
+
+[upstream]: https://github.com/bknr-datastore/bknr-datastore
+[monument]: https://github.com/bknr-datastore/bknr-datastore#readme
+[expect]: https://core.tcl-lang.org/expect/

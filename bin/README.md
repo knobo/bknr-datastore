@@ -30,7 +30,7 @@ bknr-repl primary
 
 ```
 primary: serving replicas on 127.0.0.1:9100
-commands:  say <text> | list | clients | snapshot | quit
+commands:  say <text> | del <id> | list | clients | status | snapshot | quit
 > say hello
   committed #0 (LSN 1)
 ```
@@ -42,7 +42,7 @@ bknr-repl standby
 ```
 
 ```
-standby: read-only REPL.  commands: list | count | lsn | help | quit
+standby: read-only REPL.  commands: list | count | lsn | status | help | quit
 standby> standby: connecting to 127.0.0.1:9100 ...
 [replica] LSN 1  new message  |  1 message(s)  |  latest: hello
 ```
