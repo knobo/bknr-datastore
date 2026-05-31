@@ -235,6 +235,10 @@ transaction with the arguments (store transaction encoded-bytes lsn)."))
       (with-open-file (f (store-random-state-pathname store))
         (restart-case
             (setf (store-random-state store)
+                  ;; NOTE: SBCL serializes RANDOM-STATE using #. (read-eval), so
+                  ;; *read-eval* cannot be disabled here without breaking reads.
+                  ;; The random-state file is therefore a read-eval surface; a
+                  ;; hardened build needs a custom (non read/print) serialization.
                   (handler-case
                       (read f)
                     (error (e)
